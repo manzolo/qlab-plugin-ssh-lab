@@ -34,7 +34,7 @@ LAB_DIR="lab"
 IMAGE_DIR="$WORKSPACE_DIR/images"
 CLOUD_IMAGE_URL=$(get_config CLOUD_IMAGE_URL "https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img")
 CLOUD_IMAGE_FILE="$IMAGE_DIR/ubuntu-22.04-minimal-cloudimg-amd64.img"
-MEMORY=$(get_config DEFAULT_MEMORY 1024)
+MEMORY="${QLAB_MEMORY:-$(get_config DEFAULT_MEMORY 1024)}"
 
 # Ensure directories exist
 mkdir -p "$LAB_DIR" "$IMAGE_DIR"
@@ -247,7 +247,7 @@ if [[ -f "$OVERLAY_DISK" ]]; then
     info "Removing previous overlay disk..."
     rm -f "$OVERLAY_DISK"
 fi
-create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_DISK"
+create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_DISK" "${QLAB_DISK_SIZE:-}"
 echo ""
 
 # Step 5: Boot the VM in background
@@ -281,4 +281,7 @@ echo "    qlab log ${PLUGIN_NAME}"
 echo ""
 echo "  Stop VM:"
 echo "    qlab stop ${PLUGIN_NAME}"
+echo ""
+echo "  Tip: override resources with environment variables:"
+echo "    QLAB_MEMORY=4096 QLAB_DISK_SIZE=30G qlab run ${PLUGIN_NAME}"
 echo "============================================="

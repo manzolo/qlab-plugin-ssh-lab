@@ -6,8 +6,13 @@ set -euo pipefail
 echo ""
 echo "  [ssh-lab] Installing..."
 echo ""
-echo "  This plugin demonstrates SSH hardening techniques inside"
-echo "  a QEMU VM with fail2ban, port knocking, and key authentication."
+echo "  This plugin creates two VMs for SSH hardening practice:"
+echo ""
+echo "    1. ssh-lab-server — SSH server with fail2ban, knockd, key auth"
+echo "       Role: defend this machine"
+echo ""
+echo "    2. ssh-lab-client — attack/testing tools (nmap, hydra, sshpass)"
+echo "       Role: test the server's defenses"
 echo ""
 echo "  What you will learn:"
 echo "    - How to configure SSH key-based authentication"
@@ -32,9 +37,18 @@ for cmd in qemu-system-x86_64 qemu-img genisoimage curl; do
     fi
 done
 
+# Optional tools (useful but not required)
+for cmd in nmap; do
+    if command -v "$cmd" &>/dev/null; then
+        echo "    [OK] $cmd (optional)"
+    else
+        echo "    [--] $cmd — not found (optional, available inside client VM)"
+    fi
+done
+
 if [[ "$local_ok" == true ]]; then
     echo ""
-    echo "  All dependencies are available."
+    echo "  All required dependencies are available."
 else
     echo ""
     echo "  Some dependencies are missing. Install them with:"

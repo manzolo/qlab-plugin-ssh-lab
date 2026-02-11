@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# ssh-lab run script — boots a VM for SSH hardening practice with fail2ban and port knocking
+# ssh-lab run script — boots two VMs for SSH hardening practice:
+#   server (fail2ban, knockd, sshd hardening) + client (attack/testing tools)
 
 set -euo pipefail
 
 PLUGIN_NAME="ssh-lab"
-SSH_PORT=2234
+SERVER_VM="ssh-lab-server"
+CLIENT_VM="ssh-lab-client"
+SERVER_SSH_PORT=2234
+CLIENT_SSH_PORT=2235
 
 echo "============================================="
 echo "  ssh-lab: SSH Hardening Lab"
 echo "============================================="
 echo ""
-echo "  This lab demonstrates:"
-echo "    1. SSH key-based authentication"
-echo "    2. fail2ban for brute-force protection"
-echo "    3. Port knocking with knockd"
-echo "    4. SSH daemon hardening (sshd_config)"
+echo "  This lab creates two VMs:"
+echo ""
+echo "    1. $SERVER_VM  (SSH port $SERVER_SSH_PORT)"
+echo "       SSH server with fail2ban, knockd, key authentication"
+echo "       Role: defend this machine"
+echo ""
+echo "    2. $CLIENT_VM  (SSH port $CLIENT_SSH_PORT)"
+echo "       Equipped with nmap, hydra, sshpass, knock client"
+echo "       Role: test the server's defenses"
 echo ""
 
 # Source QLab core libraries
@@ -39,16 +47,16 @@ MEMORY="${QLAB_MEMORY:-$(get_config DEFAULT_MEMORY 1024)}"
 # Ensure directories exist
 mkdir -p "$LAB_DIR" "$IMAGE_DIR"
 
-# Step 1: Download cloud image if not present
-# Cloud images are pre-built OS images designed for cloud environments.
-# They are minimal and expect cloud-init to configure them on first boot.
+# =============================================
+# Step 1: Download cloud image (shared by both VMs)
+# =============================================
 info "Step 1: Cloud image"
 if [[ -f "$CLOUD_IMAGE_FILE" ]]; then
     success "Cloud image already downloaded: $CLOUD_IMAGE_FILE"
 else
     echo ""
     echo "  Cloud images are pre-built OS images designed for cloud environments."
-    echo "  They are minimal and expect cloud-init to configure them on first boot."
+    echo "  Both VMs will share the same base image via overlay disks."
     echo ""
     info "Downloading Ubuntu cloud image..."
     echo "  URL: $CLOUD_IMAGE_URL"
@@ -64,21 +72,18 @@ else
 fi
 echo ""
 
-# Step 2: Create cloud-init configuration
-# cloud-init reads user-data to configure the VM on first boot:
-#   - creates users, installs packages, writes config files, runs commands
-info "Step 2: Cloud-init configuration"
-echo ""
-echo "  cloud-init will:"
-echo "    - Create a user 'labuser' with SSH access"
-echo "    - Install openssh-server, fail2ban, knockd, and iptables"
-echo "    - Configure fail2ban for SSH brute-force protection"
-echo "    - Set up knockd for port knocking"
+# =============================================
+# Step 2: Cloud-init configurations
+# =============================================
+info "Step 2: Cloud-init configuration for both VMs"
 echo ""
 
-cat > "$LAB_DIR/user-data" <<'USERDATA'
+# --- Server VM cloud-init ---
+info "Creating cloud-init for $SERVER_VM..."
+
+cat > "$LAB_DIR/user-data-server" <<'USERDATA'
 #cloud-config
-hostname: ssh-lab
+hostname: ssh-lab-server
 package_update: true
 users:
   - name: labuser
@@ -95,6 +100,7 @@ packages:
   - knockd
   - iptables
   - net-tools
+  - rsyslog
 write_files:
   - path: /etc/profile.d/cloud-init-status.sh
     permissions: '0755'
@@ -114,36 +120,36 @@ write_files:
       fi
   - path: /etc/motd.raw
     content: |
-      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
-        \033[1;32mssh-lab\033[0m — \033[1mSSH Hardening Lab\033[0m
-      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
+      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
+        \033[1;32mssh-lab-server\033[0m — \033[1mSSH Server (Defender)\033[0m
+      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
 
-        \033[1;33mObjectives:\033[0m
-          • configure SSH key-based authentication
-          • test fail2ban brute-force protection
-          • practice port knocking with knockd
-          • harden sshd_config settings
+        \033[1;33mRole:\033[0m  Defend this machine — harden SSH, monitor attacks
 
-        \033[1;33mSSH Commands:\033[0m
-          \033[0;32msudo systemctl status ssh\033[0m            SSH status
-          \033[0;32msudo cat /etc/ssh/sshd_config\033[0m       SSH config
-          \033[0;32mls -la ~/.ssh/\033[0m                      your SSH keys
+        \033[1;33mQuick status:\033[0m
+          \033[0;32msudo systemctl status sshd\033[0m             SSH daemon
+          \033[0;32msudo fail2ban-client status sshd\033[0m       fail2ban jail
+          \033[0;32msudo systemctl status knockd\033[0m           port knocking
 
-        \033[1;33mfail2ban:\033[0m
-          \033[0;32msudo fail2ban-client status\033[0m          overview
-          \033[0;32msudo fail2ban-client status sshd\033[0m     SSH jail info
-          \033[0;32msudo tail -f /var/log/auth.log\033[0m       auth log
+        \033[1;33mConfig files:\033[0m
+          \033[0;32m/etc/ssh/sshd_config\033[0m                   SSH config
+          \033[0;32m/etc/fail2ban/jail.local\033[0m               fail2ban rules
+          \033[0;32m/etc/knockd.conf\033[0m                       knock sequences
 
-        \033[1;33mPort Knocking (knockd):\033[0m
-          \033[0;32msudo systemctl status knockd\033[0m         knockd status
-          \033[0;32msudo cat /etc/knockd.conf\033[0m            knock config
-          \033[0;32msudo iptables -L -n\033[0m                  firewall rules
+        \033[1;33mLog monitoring:\033[0m
+          \033[0;32msudo tail -f /var/log/auth.log\033[0m         auth log (live)
+
+        \033[1;33mFirewall:\033[0m
+          \033[0;32msudo iptables -L -n\033[0m                    current rules
+
+        \033[1;33mSSH keys:\033[0m
+          \033[0;32mls -la ~/.ssh/\033[0m                         your SSH keys
+          \033[0;32mcat ~/.ssh/authorized_keys\033[0m             authorized keys
 
         \033[1;33mCredentials:\033[0m  \033[1;36mlabuser\033[0m / \033[1;36mlabpass\033[0m
         \033[1;33mExit:\033[0m         type '\033[1;31mexit\033[0m'
 
-      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
-
+      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
 
   - path: /etc/fail2ban/jail.local
     permissions: '0644'
@@ -153,6 +159,7 @@ write_files:
       port = ssh
       filter = sshd
       logpath = /var/log/auth.log
+      backend = auto
       maxretry = 3
       bantime = 3600
       findtime = 600
@@ -182,11 +189,13 @@ runcmd:
   - systemctl restart sshd
   - mkdir -p /home/labuser/.ssh
   - ssh-keygen -t ed25519 -f /home/labuser/.ssh/id_ed25519 -N "" -C "labuser@ssh-lab"
-  - cp /home/labuser/.ssh/id_ed25519.pub /home/labuser/.ssh/authorized_keys
+  - cat /home/labuser/.ssh/id_ed25519.pub >> /home/labuser/.ssh/authorized_keys
   - chmod 700 /home/labuser/.ssh
   - chmod 600 /home/labuser/.ssh/authorized_keys /home/labuser/.ssh/id_ed25519
   - chmod 644 /home/labuser/.ssh/id_ed25519.pub
   - chown -R labuser:labuser /home/labuser
+  - systemctl enable rsyslog
+  - systemctl restart rsyslog
   - systemctl restart fail2ban
   - |
     # Detect the main network interface for knockd
@@ -197,90 +206,186 @@ runcmd:
     fi
   - systemctl enable knockd || true
   - systemctl start knockd || true
-  - echo "=== ssh-lab VM is ready! ==="
+  - echo "=== ssh-lab-server VM is ready! ==="
 USERDATA
 
 # Inject the SSH public key into user-data
-sed -i "s|__QLAB_SSH_PUB_KEY__|${QLAB_SSH_PUB_KEY:-}|g" "$LAB_DIR/user-data"
+sed -i "s|__QLAB_SSH_PUB_KEY__|${QLAB_SSH_PUB_KEY:-}|g" "$LAB_DIR/user-data-server"
 
-cat > "$LAB_DIR/meta-data" <<METADATA
-instance-id: ${PLUGIN_NAME}-001
-local-hostname: ${PLUGIN_NAME}
+cat > "$LAB_DIR/meta-data-server" <<METADATA
+instance-id: ${SERVER_VM}-001
+local-hostname: ${SERVER_VM}
 METADATA
 
-success "Created cloud-init files in $LAB_DIR/"
+success "Created cloud-init for $SERVER_VM"
+
+# --- Client VM cloud-init ---
+info "Creating cloud-init for $CLIENT_VM..."
+
+cat > "$LAB_DIR/user-data-client" <<'USERDATA'
+#cloud-config
+hostname: ssh-lab-client
+users:
+  - name: labuser
+    plain_text_passwd: labpass
+    lock_passwd: false
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - "__QLAB_SSH_PUB_KEY__"
+ssh_pwauth: true
+package_update: true
+packages:
+  - openssh-client
+  - nmap
+  - knockd
+  - hydra
+  - sshpass
+  - net-tools
+  - curl
+write_files:
+  - path: /etc/profile.d/cloud-init-status.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      if command -v cloud-init >/dev/null 2>&1; then
+        status=$(cloud-init status 2>/dev/null)
+        if echo "$status" | grep -q "running"; then
+          printf '\033[1;33m'
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Cloud-init is still running..."
+          echo "  Some packages and services may not be ready yet."
+          echo "  Run 'cloud-init status --wait' to wait for completion."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          printf '\033[0m\n'
+        fi
+      fi
+  - path: /etc/motd.raw
+    content: |
+      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
+        \033[1;31mssh-lab-client\033[0m — \033[1mSSH Client (Attacker)\033[0m
+      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
+
+        \033[1;33mRole:\033[0m  Test the server's defenses
+
+        \033[1;33mTarget:\033[0m
+          \033[0;32mssh labuser@10.0.2.2 -p 2234\033[0m          connect to server
+
+        \033[1;33mAttack tools:\033[0m
+          \033[0;32mhydra -l labuser -P passwords.txt ssh://10.0.2.2:2234\033[0m
+                                                    brute-force test
+          \033[0;32msshpass -p wrong ssh labuser@10.0.2.2 -p 2234\033[0m
+                                                    manual failed login
+          \033[0;32mnmap -sV -p 22 10.0.2.2\033[0m               port scan
+          \033[0;32mknock 10.0.2.2 7000 8000 9000\033[0m         port knocking
+
+        \033[1;33mCredentials:\033[0m  \033[1;36mlabuser\033[0m / \033[1;36mlabpass\033[0m
+        \033[1;33mExit:\033[0m         type '\033[1;31mexit\033[0m'
+
+      \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
+
+runcmd:
+  - chmod -x /etc/update-motd.d/*
+  - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
+  - sed -i 's/^session.*pam_motd.*/# &/' /etc/pam.d/sshd
+  - printf '%b\n' "$(cat /etc/motd.raw)" > /etc/motd
+  - rm -f /etc/motd.raw
+  - systemctl restart sshd
+  - echo "=== ssh-lab-client VM is ready! ==="
+USERDATA
+
+# Inject the SSH public key into user-data
+sed -i "s|__QLAB_SSH_PUB_KEY__|${QLAB_SSH_PUB_KEY:-}|g" "$LAB_DIR/user-data-client"
+
+cat > "$LAB_DIR/meta-data-client" <<METADATA
+instance-id: ${CLIENT_VM}-001
+local-hostname: ${CLIENT_VM}
+METADATA
+
+success "Created cloud-init for $CLIENT_VM"
 echo ""
 
-# Step 3: Generate cloud-init ISO
-# QEMU reads cloud-init data from a small ISO image (CD-ROM).
-# We use genisoimage to create it with the 'cidata' volume label.
-info "Step 3: Cloud-init ISO"
+# =============================================
+# Step 3: Generate cloud-init ISOs
+# =============================================
+info "Step 3: Cloud-init ISOs"
 echo ""
-echo "  QEMU reads cloud-init data from a small ISO image (CD-ROM)."
-echo "  We use genisoimage to create it with the 'cidata' volume label."
-echo ""
-
-CIDATA_ISO="$LAB_DIR/cidata.iso"
 check_dependency genisoimage || {
     warn "genisoimage not found. Install it with: sudo apt install genisoimage"
     exit 1
 }
-genisoimage -output "$CIDATA_ISO" -volid cidata -joliet -rock \
-    "$LAB_DIR/user-data" "$LAB_DIR/meta-data" 2>/dev/null
-success "Created cloud-init ISO: $CIDATA_ISO"
+
+CIDATA_SERVER="$LAB_DIR/cidata-server.iso"
+genisoimage -output "$CIDATA_SERVER" -volid cidata -joliet -rock \
+    -graft-points "user-data=$LAB_DIR/user-data-server" "meta-data=$LAB_DIR/meta-data-server" 2>/dev/null
+success "Created cloud-init ISO: $CIDATA_SERVER"
+
+CIDATA_CLIENT="$LAB_DIR/cidata-client.iso"
+genisoimage -output "$CIDATA_CLIENT" -volid cidata -joliet -rock \
+    -graft-points "user-data=$LAB_DIR/user-data-client" "meta-data=$LAB_DIR/meta-data-client" 2>/dev/null
+success "Created cloud-init ISO: $CIDATA_CLIENT"
 echo ""
 
-# Step 4: Create overlay disk
-# An overlay disk uses copy-on-write (COW) on top of the base image.
-# The original cloud image stays untouched; all writes go to the overlay.
-info "Step 4: Overlay disk"
+# =============================================
+# Step 4: Create overlay disks
+# =============================================
+info "Step 4: Overlay disks"
 echo ""
-echo "  An overlay disk uses copy-on-write (COW) on top of the base image."
-echo "  This means:"
-echo "    - The original cloud image stays untouched"
-echo "    - All writes go to the overlay file"
-echo "    - You can reset the lab by deleting the overlay"
+echo "  Each VM gets its own overlay disk (copy-on-write) so the"
+echo "  base cloud image is never modified."
 echo ""
 
-OVERLAY_DISK="$LAB_DIR/${PLUGIN_NAME}-disk.qcow2"
-if [[ -f "$OVERLAY_DISK" ]]; then
-    info "Removing previous overlay disk..."
-    rm -f "$OVERLAY_DISK"
-fi
-create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_DISK" "${QLAB_DISK_SIZE:-}"
+OVERLAY_SERVER="$LAB_DIR/${SERVER_VM}-disk.qcow2"
+if [[ -f "$OVERLAY_SERVER" ]]; then rm -f "$OVERLAY_SERVER"; fi
+create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_SERVER" "${QLAB_DISK_SIZE:-}"
+
+OVERLAY_CLIENT="$LAB_DIR/${CLIENT_VM}-disk.qcow2"
+if [[ -f "$OVERLAY_CLIENT" ]]; then rm -f "$OVERLAY_CLIENT"; fi
+create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_CLIENT" "${QLAB_DISK_SIZE:-}"
 echo ""
 
-# Step 5: Boot the VM in background
-info "Step 5: Starting VM in background"
-echo ""
-echo "  The VM will run in background with:"
-echo "    - Serial output logged to .qlab/logs/$PLUGIN_NAME.log"
-echo "    - SSH access on port $SSH_PORT"
+# =============================================
+# Step 5: Start both VMs
+# =============================================
+info "Step 5: Starting VMs"
 echo ""
 
-start_vm "$OVERLAY_DISK" "$CIDATA_ISO" "$MEMORY" "$PLUGIN_NAME" "$SSH_PORT"
+info "Starting $SERVER_VM (SSH port $SERVER_SSH_PORT)..."
+start_vm "$OVERLAY_SERVER" "$CIDATA_SERVER" "$MEMORY" "$SERVER_VM" "$SERVER_SSH_PORT"
+echo ""
+
+info "Starting $CLIENT_VM (SSH port $CLIENT_SSH_PORT)..."
+start_vm "$OVERLAY_CLIENT" "$CIDATA_CLIENT" "$MEMORY" "$CLIENT_VM" "$CLIENT_SSH_PORT"
 
 echo ""
 echo "============================================="
-echo "  ssh-lab: VM is booting"
+echo "  ssh-lab: Both VMs are booting"
 echo "============================================="
 echo ""
-echo "  Credentials:"
+echo "  Server VM (defender):"
+echo "    SSH:   qlab shell $SERVER_VM"
+echo "    Log:   qlab log $SERVER_VM"
+echo "    Port:  $SERVER_SSH_PORT"
+echo "    Services: sshd, fail2ban, knockd"
+echo ""
+echo "  Client VM (attacker):"
+echo "    SSH:   qlab shell $CLIENT_VM"
+echo "    Log:   qlab log $CLIENT_VM"
+echo "    Port:  $CLIENT_SSH_PORT"
+echo "    Tools: nmap, hydra, sshpass, knock"
+echo ""
+echo "  Credentials (both VMs):"
 echo "    Username: labuser"
 echo "    Password: labpass"
 echo ""
-echo "  Connect via SSH (wait ~60s for boot + package install):"
-echo "    qlab shell ${PLUGIN_NAME}"
+echo "  Wait ~90s for boot + package installation."
 echo ""
-echo "  Port knocking sequence (to open SSH from inside VM):"
-echo "    Open:  knock <target> 7000 8000 9000"
-echo "    Close: knock <target> 9000 8000 7000"
+echo "  Stop both VMs:"
+echo "    qlab stop $PLUGIN_NAME"
 echo ""
-echo "  View boot log:"
-echo "    qlab log ${PLUGIN_NAME}"
-echo ""
-echo "  Stop VM:"
-echo "    qlab stop ${PLUGIN_NAME}"
+echo "  Stop a single VM:"
+echo "    qlab stop $SERVER_VM"
+echo "    qlab stop $CLIENT_VM"
 echo ""
 echo "  Tip: override resources with environment variables:"
 echo "    QLAB_MEMORY=4096 QLAB_DISK_SIZE=30G qlab run ${PLUGIN_NAME}"

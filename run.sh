@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ssh-lab run script — boots two VMs for SSH hardening practice:
 #   server (fail2ban, knockd, sshd hardening) + client (attack/testing tools)
+# VMs communicate over an internal LAN via QEMU socket multicast.
 
 set -euo pipefail
 
@@ -10,17 +11,26 @@ CLIENT_VM="ssh-lab-client"
 SERVER_SSH_PORT=2234
 CLIENT_SSH_PORT=2235
 
+# Internal LAN — direct VM-to-VM link via QEMU socket multicast
+INTERNAL_MCAST="230.0.0.1:10001"
+SERVER_INTERNAL_IP="192.168.100.1"
+CLIENT_INTERNAL_IP="192.168.100.2"
+SERVER_LAN_MAC="52:54:00:00:02:01"
+CLIENT_LAN_MAC="52:54:00:00:02:02"
+
 echo "============================================="
 echo "  ssh-lab: SSH Hardening Lab"
 echo "============================================="
 echo ""
-echo "  This lab creates two VMs:"
+echo "  This lab creates two VMs on an internal LAN:"
 echo ""
 echo "    1. $SERVER_VM  (SSH port $SERVER_SSH_PORT)"
+echo "       Internal IP: $SERVER_INTERNAL_IP"
 echo "       SSH server with fail2ban, knockd, key authentication"
 echo "       Role: defend this machine"
 echo ""
 echo "    2. $CLIENT_VM  (SSH port $CLIENT_SSH_PORT)"
+echo "       Internal IP: $CLIENT_INTERNAL_IP"
 echo "       Equipped with nmap, hydra, sshpass, knock client"
 echo "       Role: test the server's defenses"
 echo ""
@@ -102,6 +112,16 @@ packages:
   - net-tools
   - rsyslog
 write_files:
+  - path: /etc/netplan/60-internal.yaml
+    content: |
+      network:
+        version: 2
+        ethernets:
+          sshlan:
+            match:
+              macaddress: "__SERVER_LAN_MAC__"
+            addresses:
+              - __SERVER_INTERNAL_IP__/24
   - path: /etc/profile.d/cloud-init-status.sh
     permissions: '0755'
     content: |
@@ -125,6 +145,7 @@ write_files:
       \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
 
         \033[1;33mRole:\033[0m  Defend this machine — harden SSH, monitor attacks
+        \033[1;33mInternal IP:\033[0m  __SERVER_INTERNAL_IP__
 
         \033[1;33mQuick status:\033[0m
           \033[0;32msudo systemctl status sshd\033[0m             SSH daemon
@@ -161,7 +182,7 @@ write_files:
       logpath = /var/log/auth.log
       backend = auto
       maxretry = 3
-      bantime = 60
+      bantime = 3600
       findtime = 600
   - path: /etc/knockd.conf
     permissions: '0644'
@@ -187,6 +208,7 @@ runcmd:
   - printf '%b\n' "$(cat /etc/motd.raw)" > /etc/motd
   - rm -f /etc/motd.raw
   - systemctl restart sshd
+  - netplan apply
   - mkdir -p /home/labuser/.ssh
   - ssh-keygen -t ed25519 -f /home/labuser/.ssh/id_ed25519 -N "" -C "labuser@ssh-lab"
   - cat /home/labuser/.ssh/id_ed25519.pub >> /home/labuser/.ssh/authorized_keys
@@ -209,8 +231,10 @@ runcmd:
   - echo "=== ssh-lab-server VM is ready! ==="
 USERDATA
 
-# Inject the SSH public key into user-data
+# Inject variables into server user-data
 sed -i "s|__QLAB_SSH_PUB_KEY__|${QLAB_SSH_PUB_KEY:-}|g" "$LAB_DIR/user-data-server"
+sed -i "s|__SERVER_LAN_MAC__|${SERVER_LAN_MAC}|g" "$LAB_DIR/user-data-server"
+sed -i "s|__SERVER_INTERNAL_IP__|${SERVER_INTERNAL_IP}|g" "$LAB_DIR/user-data-server"
 
 cat > "$LAB_DIR/meta-data-server" <<METADATA
 instance-id: ${SERVER_VM}-001
@@ -244,6 +268,16 @@ packages:
   - net-tools
   - curl
 write_files:
+  - path: /etc/netplan/60-internal.yaml
+    content: |
+      network:
+        version: 2
+        ethernets:
+          sshlan:
+            match:
+              macaddress: "__CLIENT_LAN_MAC__"
+            addresses:
+              - __CLIENT_INTERNAL_IP__/24
   - path: /etc/profile.d/cloud-init-status.sh
     permissions: '0755'
     content: |
@@ -267,17 +301,18 @@ write_files:
       \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
 
         \033[1;33mRole:\033[0m  Test the server's defenses
+        \033[1;33mInternal IP:\033[0m  __CLIENT_INTERNAL_IP__
 
-        \033[1;33mTarget:\033[0m
-          \033[0;32mssh labuser@10.0.2.2 -p 2234\033[0m          connect to server
+        \033[1;33mTarget (server):\033[0m
+          \033[0;32mssh labuser@__SERVER_INTERNAL_IP__\033[0m             connect to server
 
         \033[1;33mAttack tools:\033[0m
-          \033[0;32mhydra -l labuser -P passwords.txt ssh://10.0.2.2:2234\033[0m
+          \033[0;32mhydra -l labuser -P passwords.txt ssh://__SERVER_INTERNAL_IP__\033[0m
                                                     brute-force test
-          \033[0;32msshpass -p wrong ssh labuser@10.0.2.2 -p 2234\033[0m
+          \033[0;32msshpass -p wrong ssh labuser@__SERVER_INTERNAL_IP__\033[0m
                                                     manual failed login
-          \033[0;32mnmap -sV -p 22 10.0.2.2\033[0m               port scan
-          \033[0;32mknock 10.0.2.2 7000 8000 9000\033[0m         port knocking
+          \033[0;32mnmap -sV -p 22 __SERVER_INTERNAL_IP__\033[0m         port scan
+          \033[0;32mknock __SERVER_INTERNAL_IP__ 7000 8000 9000\033[0m   port knocking
 
         \033[1;33mCredentials:\033[0m  \033[1;36mlabuser\033[0m / \033[1;36mlabpass\033[0m
         \033[1;33mExit:\033[0m         type '\033[1;31mexit\033[0m'
@@ -291,11 +326,15 @@ runcmd:
   - printf '%b\n' "$(cat /etc/motd.raw)" > /etc/motd
   - rm -f /etc/motd.raw
   - systemctl restart sshd
+  - netplan apply
   - echo "=== ssh-lab-client VM is ready! ==="
 USERDATA
 
-# Inject the SSH public key into user-data
+# Inject variables into client user-data
 sed -i "s|__QLAB_SSH_PUB_KEY__|${QLAB_SSH_PUB_KEY:-}|g" "$LAB_DIR/user-data-client"
+sed -i "s|__CLIENT_LAN_MAC__|${CLIENT_LAN_MAC}|g" "$LAB_DIR/user-data-client"
+sed -i "s|__CLIENT_INTERNAL_IP__|${CLIENT_INTERNAL_IP}|g" "$LAB_DIR/user-data-client"
+sed -i "s|__SERVER_INTERNAL_IP__|${SERVER_INTERNAL_IP}|g" "$LAB_DIR/user-data-client"
 
 cat > "$LAB_DIR/meta-data-client" <<METADATA
 instance-id: ${CLIENT_VM}-001
@@ -350,12 +389,16 @@ echo ""
 info "Step 5: Starting VMs"
 echo ""
 
-info "Starting $SERVER_VM (SSH port $SERVER_SSH_PORT)..."
-start_vm "$OVERLAY_SERVER" "$CIDATA_SERVER" "$MEMORY" "$SERVER_VM" "$SERVER_SSH_PORT"
+info "Starting $SERVER_VM (SSH port $SERVER_SSH_PORT, LAN $SERVER_INTERNAL_IP)..."
+start_vm "$OVERLAY_SERVER" "$CIDATA_SERVER" "$MEMORY" "$SERVER_VM" "$SERVER_SSH_PORT" \
+    "-netdev" "socket,id=vlan1,mcast=${INTERNAL_MCAST}" \
+    "-device" "virtio-net-pci,netdev=vlan1,mac=${SERVER_LAN_MAC}"
 echo ""
 
-info "Starting $CLIENT_VM (SSH port $CLIENT_SSH_PORT)..."
-start_vm "$OVERLAY_CLIENT" "$CIDATA_CLIENT" "$MEMORY" "$CLIENT_VM" "$CLIENT_SSH_PORT"
+info "Starting $CLIENT_VM (SSH port $CLIENT_SSH_PORT, LAN $CLIENT_INTERNAL_IP)..."
+start_vm "$OVERLAY_CLIENT" "$CIDATA_CLIENT" "$MEMORY" "$CLIENT_VM" "$CLIENT_SSH_PORT" \
+    "-netdev" "socket,id=vlan1,mcast=${INTERNAL_MCAST}" \
+    "-device" "virtio-net-pci,netdev=vlan1,mac=${CLIENT_LAN_MAC}"
 
 echo ""
 echo "============================================="
@@ -363,16 +406,21 @@ echo "  ssh-lab: Both VMs are booting"
 echo "============================================="
 echo ""
 echo "  Server VM (defender):"
-echo "    SSH:   qlab shell $SERVER_VM"
-echo "    Log:   qlab log $SERVER_VM"
-echo "    Port:  $SERVER_SSH_PORT"
-echo "    Services: sshd, fail2ban, knockd"
+echo "    SSH:          qlab shell $SERVER_VM"
+echo "    Log:          qlab log $SERVER_VM"
+echo "    Host port:    $SERVER_SSH_PORT"
+echo "    Internal IP:  $SERVER_INTERNAL_IP"
+echo "    Services:     sshd, fail2ban, knockd"
 echo ""
 echo "  Client VM (attacker):"
-echo "    SSH:   qlab shell $CLIENT_VM"
-echo "    Log:   qlab log $CLIENT_VM"
-echo "    Port:  $CLIENT_SSH_PORT"
-echo "    Tools: nmap, hydra, sshpass, knock"
+echo "    SSH:          qlab shell $CLIENT_VM"
+echo "    Log:          qlab log $CLIENT_VM"
+echo "    Host port:    $CLIENT_SSH_PORT"
+echo "    Internal IP:  $CLIENT_INTERNAL_IP"
+echo "    Tools:        nmap, hydra, sshpass, knock"
+echo ""
+echo "  Internal LAN:   $SERVER_INTERNAL_IP <-> $CLIENT_INTERNAL_IP"
+echo "  From client:    ssh labuser@$SERVER_INTERNAL_IP"
 echo ""
 echo "  Credentials (both VMs):"
 echo "    Username: labuser"

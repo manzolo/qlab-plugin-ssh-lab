@@ -9,25 +9,26 @@ A [QLab](https://github.com/manzolo/qlab) plugin that boots two virtual machines
 ## Architecture
 
 ```
-┌─────────────────────────┐       ┌─────────────────────────┐
-│    ssh-lab-server        │       │    ssh-lab-client        │
-│    (Defender)            │       │    (Attacker)            │
-│                          │       │                          │
-│  sshd, fail2ban, knockd  │◄──────│  nmap, hydra, sshpass    │
-│  iptables, rsyslog       │ SSH   │  knock, curl             │
-│                          │       │                          │
-│  SSH port: 2234          │       │  SSH port: 2235          │
-└──────────┬───────────────┘       └──────────┬───────────────┘
-           │                                  │
-           └──────────┬───────────────────────┘
-                      │ host (10.0.2.2)
-                ┌─────┴─────┐
-                │   QEMU    │
-                │   Host    │
-                └───────────┘
+┌──────────────────────────┐        ┌──────────────────────────┐
+│    ssh-lab-server         │        │    ssh-lab-client         │
+│    (Defender)             │        │    (Attacker)             │
+│                           │        │                           │
+│  sshd, fail2ban, knockd   │◄───────│  nmap, hydra, sshpass     │
+│  iptables, rsyslog        │  LAN   │  knock, curl              │
+│                           │        │                           │
+│  LAN IP: 192.168.100.1   │        │  LAN IP: 192.168.100.2   │
+│  Host SSH port: 2234     │        │  Host SSH port: 2235     │
+└──────────┬────────────────┘        └──────────┬────────────────┘
+           │  192.168.100.0/24 (internal LAN)   │
+           └────────────────┬───────────────────┘
+                            │ QEMU socket multicast
+                   ┌────────┴────────┐
+                   │   QEMU Host     │
+                   │  qlab shell ... │
+                   └─────────────────┘
 ```
 
-The client VM reaches the server through the host at `10.0.2.2:2234`. Both VMs share the same base cloud image via overlay disks.
+The two VMs are connected by an **internal LAN** (QEMU socket multicast) with dedicated IPs. The client reaches the server directly at `192.168.100.1:22`. Host access via `qlab shell` uses separate port forwarding and is **not affected** by fail2ban bans on the internal LAN.
 
 ## Credentials
 
@@ -36,10 +37,10 @@ The client VM reaches the server through the host at `10.0.2.2:2234`. Both VMs s
 
 ## Ports
 
-| VM              | Host Port | VM Port | Service     |
-|-----------------|-----------|---------|-------------|
-| ssh-lab-server  | 2234      | 22      | SSH (sshd)  |
-| ssh-lab-client  | 2235      | 22      | SSH (shell) |
+| VM              | Host SSH Port | Internal LAN IP  | Service     |
+|-----------------|---------------|------------------|-------------|
+| ssh-lab-server  | 2234          | 192.168.100.1    | SSH (sshd)  |
+| ssh-lab-client  | 2235          | 192.168.100.2    | SSH (shell) |
 
 ## Usage
 
@@ -80,7 +81,7 @@ Learn how public key authentication works and why it's safer than passwords.
 
 ```bash
 # Connect to the server using password authentication
-sshpass -p labpass ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
+sshpass -p labpass ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
 ```
 
 **On the server VM** (`qlab shell ssh-lab-server`):
@@ -101,10 +102,10 @@ sudo systemctl restart sshd
 
 ```bash
 # Password login should now fail
-sshpass -p labpass ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
+sshpass -p labpass ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
 # → Permission denied
 
-# But qlab shell still works (uses key-based auth)
+# But qlab shell still works (uses key-based auth via host port forwarding)
 # Disconnect and reconnect via: qlab shell ssh-lab-server
 ```
 
@@ -113,10 +114,6 @@ sshpass -p labpass ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
 ### 2. fail2ban Brute-Force Protection
 
 Understand how fail2ban monitors auth logs and bans repeat offenders.
-
-> **Note:** Ban time is set to 60 seconds so that if you get locked out (both
-> `qlab shell` and client connections share the same IP in QEMU), just wait
-> 1 minute or unban from the server.
 
 **On the server VM:**
 
@@ -132,16 +129,16 @@ sudo tail -f /var/log/auth.log
 
 ```bash
 # Trigger 3+ failed login attempts to get banned
-sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
-sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
-sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
-sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
+sshpass -p wrong ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
+sshpass -p wrong ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
+sshpass -p wrong ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
+sshpass -p wrong ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
 ```
 
 **Back on the server VM:**
 
 ```bash
-# Check if the IP was banned
+# Check if the IP was banned (should show 192.168.100.2)
 sudo fail2ban-client status sshd
 
 # View failed attempts in auth.log
@@ -150,10 +147,11 @@ sudo grep "Failed password" /var/log/auth.log
 # View the ban in fail2ban log
 sudo grep "Ban" /var/log/fail2ban.log
 
-# Unban the IP immediately (replace <IP> with the banned address)
-sudo fail2ban-client set sshd unbanip <IP>
+# Note: qlab shell still works because it connects via host port forwarding,
+# not through the internal LAN — only 192.168.100.2 is banned
 
-# Or just wait 60 seconds — the ban expires automatically
+# Unban the client IP
+sudo fail2ban-client set sshd unbanip 192.168.100.2
 ```
 
 ---
@@ -181,22 +179,22 @@ sudo iptables -L -n
 
 ```bash
 # Verify SSH is blocked
-nmap -p 22 10.0.2.2
+nmap -p 22 192.168.100.1
 # → Port 22 is filtered
 
 # Knock the open sequence
-knock 10.0.2.2 7000 8000 9000
+knock 192.168.100.1 7000 8000 9000
 
 # Wait a second, then verify SSH is now accessible
 sleep 1
-nmap -p 22 10.0.2.2
+nmap -p 22 192.168.100.1
 # → Port 22 is open
 
 # Connect to the server
-ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
+ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
 
 # After disconnecting, close with the reverse sequence
-knock 10.0.2.2 9000 8000 7000
+knock 192.168.100.1 9000 8000 7000
 ```
 
 ---
@@ -228,11 +226,11 @@ sudo systemctl restart sshd
 
 ```bash
 # Root login should be denied
-sshpass -p labpass ssh root@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
+sshpass -p labpass ssh root@192.168.100.1 -o StrictHostKeyChecking=no
 # → Permission denied
 
 # Password auth should be denied
-sshpass -p labpass ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
+sshpass -p labpass ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
 # → Permission denied
 
 # After 2 failed attempts, the connection should be dropped
@@ -255,13 +253,13 @@ sudo tail -f /var/log/auth.log
 
 ```bash
 # Successful login (with password, if still enabled)
-sshpass -p labpass ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no "echo connected" 2>/dev/null
+sshpass -p labpass ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no "echo connected" 2>/dev/null
 
 # Failed login (wrong password)
-sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no 2>/dev/null
+sshpass -p wrong ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no 2>/dev/null
 
 # Failed login (nonexistent user)
-sshpass -p test ssh nobody@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no 2>/dev/null
+sshpass -p test ssh nobody@192.168.100.1 -o StrictHostKeyChecking=no 2>/dev/null
 ```
 
 **Back on the server VM:**

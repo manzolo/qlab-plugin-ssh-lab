@@ -114,6 +114,11 @@ sshpass -p labpass ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
 
 Understand how fail2ban monitors auth logs and bans repeat offenders.
 
+> **Note:** In this lab, `10.0.2.2` (the QEMU gateway) is whitelisted in fail2ban's
+> `ignoreip` so that `qlab shell` always works. Failed login attempts from the client
+> still appear in the logs and the fail counter increments — you can test actual
+> banning manually as shown below.
+
 **On the server VM:**
 
 ```bash
@@ -127,7 +132,7 @@ sudo tail -f /var/log/auth.log
 **From the client VM** (in a new terminal):
 
 ```bash
-# Trigger 3+ failed login attempts to get banned
+# Trigger failed login attempts — they appear in auth.log and the fail counter
 sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
 sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
 sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
@@ -137,14 +142,26 @@ sshpass -p wrong ssh labuser@10.0.2.2 -p 2234 -o StrictHostKeyChecking=no
 **Back on the server VM:**
 
 ```bash
-# Check if the IP was banned
+# See that fail2ban detected the failures (Currently failed / Total failed)
 sudo fail2ban-client status sshd
 
-# View the ban in auth.log
-sudo grep "Ban" /var/log/fail2ban.log
+# View failed attempts in auth.log
+sudo grep "Failed password" /var/log/auth.log
 
-# Unban the IP (replace <IP> with the banned address)
-sudo fail2ban-client set sshd unbanip <IP>
+# Manually ban an IP to see the effect
+sudo fail2ban-client set sshd banip 192.168.1.100
+
+# Verify the ban is active
+sudo fail2ban-client status sshd
+sudo iptables -L -n | grep 192.168.1.100
+
+# Unban the IP
+sudo fail2ban-client set sshd unbanip 192.168.1.100
+
+# Optional: remove 10.0.2.2 from ignoreip to test real banning
+# (warning: this will also block qlab shell if you get banned!)
+sudo sed -i '/ignoreip/d' /etc/fail2ban/jail.local
+sudo systemctl restart fail2ban
 ```
 
 ---

@@ -160,8 +160,11 @@ write_files:
         \033[1;33mLog monitoring:\033[0m
           \033[0;32msudo tail -f /var/log/auth.log\033[0m         auth log (live)
 
-        \033[1;33mFirewall:\033[0m
+        \033[1;33mFirewall & Port Knocking:\033[0m
           \033[0;32msudo iptables -L -n\033[0m                    current rules
+          SSH from LAN is blocked by default (iptables DROP)
+          Knock sequence: \033[0;32m7000, 8000, 9000\033[0m to open
+          Reverse:        \033[0;32m9000, 8000, 7000\033[0m to close
 
         \033[1;33mSSH keys:\033[0m
           \033[0;32mls -la ~/.ssh/\033[0m                         your SSH keys
@@ -193,7 +196,7 @@ write_files:
       [openSSH]
           sequence    = 7000,8000,9000
           seq_timeout = 5
-          command     = /usr/sbin/iptables -A INPUT -s %IP% -p tcp --dport 22 -j ACCEPT
+          command     = /usr/sbin/iptables -I INPUT -s %IP% -p tcp --dport 22 -j ACCEPT
           tcpflags    = syn
 
       [closeSSH]
@@ -220,14 +223,19 @@ runcmd:
   - systemctl restart rsyslog
   - systemctl restart fail2ban
   - |
-    # Detect the main network interface for knockd
-    IFACE=$(ip route show default | awk '{print $5}' | head -1)
+    # Find the internal LAN interface by MAC address for knockd
+    IFACE=$(ip -o link | grep -i "__SERVER_LAN_MAC__" | awk -F': ' '{print $2}')
+    if [ -z "$IFACE" ]; then
+      # Fallback: detect default interface
+      IFACE=$(ip route show default | awk '{print $5}' | head -1)
+    fi
     if [ -n "$IFACE" ]; then
       sed -i "s/^#\?KNOCKD_OPTS=.*/KNOCKD_OPTS=\"-i $IFACE\"/" /etc/default/knockd 2>/dev/null || true
       sed -i 's/^#\?START_KNOCKD=.*/START_KNOCKD=1/' /etc/default/knockd 2>/dev/null || true
     fi
   - systemctl enable knockd || true
   - systemctl start knockd || true
+  - iptables -A INPUT -s 192.168.100.0/24 -p tcp --dport 22 -j DROP
   - echo "=== ssh-lab-server VM is ready! ==="
 USERDATA
 

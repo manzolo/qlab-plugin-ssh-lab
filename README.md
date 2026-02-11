@@ -158,7 +158,7 @@ sudo fail2ban-client set sshd unbanip 192.168.100.2
 
 ### 3. Port Knocking with knockd
 
-Learn how to hide SSH behind a knock sequence so port scans don't reveal it.
+SSH from the internal LAN is **blocked by default** (iptables DROP rule). You must knock the correct sequence to open it.
 
 **On the server VM:**
 
@@ -168,11 +168,9 @@ cat /etc/knockd.conf
 # The open sequence is: 7000, 8000, 9000
 # The close sequence is: 9000, 8000, 7000
 
-# Add an iptables rule to DROP SSH by default
-sudo iptables -A INPUT -p tcp --dport 22 -j DROP
-
-# Verify SSH is now blocked
+# Verify the DROP rule is active
 sudo iptables -L -n
+# You should see: DROP tcp -- 192.168.100.0/24 ... dpt:22
 ```
 
 **From the client VM:**
@@ -195,7 +193,14 @@ ssh labuser@192.168.100.1 -o StrictHostKeyChecking=no
 
 # After disconnecting, close with the reverse sequence
 knock 192.168.100.1 9000 8000 7000
+
+# Verify SSH is blocked again
+nmap -p 22 192.168.100.1
+# → Port 22 is filtered
 ```
+
+> **Note:** `qlab shell ssh-lab-server` always works because it connects via
+> host port forwarding, which bypasses the internal LAN iptables rules.
 
 ---
 

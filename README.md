@@ -10,15 +10,15 @@ A [QLab](https://github.com/manzolo/qlab) plugin that boots two virtual machines
 
 ```
 ┌──────────────────────────┐        ┌──────────────────────────┐
-│    ssh-lab-server         │        │    ssh-lab-client         │
-│    (Defender)             │        │    (Attacker)             │
-│                           │        │                           │
-│  sshd, fail2ban, knockd   │◄───────│  nmap, hydra, sshpass     │
-│  iptables, rsyslog        │  LAN   │  knock, curl              │
-│                           │        │                           │
+│    ssh-lab-server        │        │    ssh-lab-client        │
+│    (Defender)            │        │    (Attacker)            │
+│                          │        │                          │
+│  sshd, fail2ban, knock   │◄───────│  nmap, hydra, sshpass    │
+│  iptables, rsyslog       │  LAN   │  knock, curl             │
+│                          │        │                          │
 │  LAN IP: 192.168.100.1   │        │  LAN IP: 192.168.100.2   │
 │  Host SSH port: 2234     │        │  Host SSH port: 2235     │
-└──────────┬────────────────┘        └──────────┬────────────────┘
+└──────────┬───────────────┘        └───────────┬──────────────┘
            │  192.168.100.0/24 (internal LAN)   │
            └────────────────┬───────────────────┘
                             │ QEMU socket multicast

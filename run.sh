@@ -196,13 +196,13 @@ write_files:
       [openSSH]
           sequence    = 7000,8000,9000
           seq_timeout = 5
-          command     = /usr/sbin/iptables -I INPUT -s %IP% -p tcp --dport 22 -j ACCEPT
+          command     = /usr/sbin/iptables -I KNOCKD_SSH -s %IP% -p tcp --dport 22 -j ACCEPT
           tcpflags    = syn
 
       [closeSSH]
           sequence    = 9000,8000,7000
           seq_timeout = 5
-          command     = /usr/sbin/iptables -D INPUT -s %IP% -p tcp --dport 22 -j ACCEPT
+          command     = /usr/sbin/iptables -D KNOCKD_SSH -s %IP% -p tcp --dport 22 -j ACCEPT
           tcpflags    = syn
 runcmd:
   - chmod -x /etc/update-motd.d/*
@@ -235,7 +235,13 @@ runcmd:
     fi
   - systemctl enable knockd || true
   - systemctl start knockd || true
-  - iptables -A INPUT -s 192.168.100.0/24 -p tcp --dport 22 -j DROP
+  - |
+    # Set up KNOCKD_SSH chain: fail2ban rules in INPUT are checked first,
+    # then LAN traffic jumps to KNOCKD_SSH where knockd adds/removes ACCEPT rules.
+    # If no ACCEPT match → DROP at the end of the chain.
+    iptables -N KNOCKD_SSH
+    iptables -A KNOCKD_SSH -j DROP
+    iptables -A INPUT -s 192.168.100.0/24 -p tcp --dport 22 -j KNOCKD_SSH
   - echo "=== ssh-lab-server VM is ready! ==="
 USERDATA
 

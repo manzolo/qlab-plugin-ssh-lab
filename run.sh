@@ -161,9 +161,8 @@ write_files:
       logpath = /var/log/auth.log
       backend = auto
       maxretry = 3
-      bantime = 3600
+      bantime = 60
       findtime = 600
-      ignoreip = 127.0.0.1/8 ::1 10.0.2.2
   - path: /etc/knockd.conf
     permissions: '0644'
     content: |

@@ -17,7 +17,7 @@ A [QLab](https://github.com/manzolo/qlab) plugin that boots two virtual machines
 │  iptables, rsyslog       │  LAN   │  knock, curl             │
 │                          │        │                          │
 │  LAN IP: 192.168.100.1   │        │  LAN IP: 192.168.100.2   │
-│  Host SSH port: 2234     │        │  Host SSH port: 2235     │
+│  Host SSH port: dynamic  │        │  Host SSH port: dynamic  │
 └──────────┬───────────────┘        └───────────┬──────────────┘
            │  192.168.100.0/24 (internal LAN)   │
            └────────────────┬───────────────────┘
@@ -39,8 +39,10 @@ The two VMs are connected by an **internal LAN** (QEMU socket multicast) with de
 
 | VM              | Host SSH Port | Internal LAN IP  | Service     |
 |-----------------|---------------|------------------|-------------|
-| ssh-lab-server  | 2234          | 192.168.100.1    | SSH (sshd)  |
-| ssh-lab-client  | 2235          | 192.168.100.2    | SSH (shell) |
+| ssh-lab-server  | dynamic       | 192.168.100.1    | SSH (sshd)  |
+| ssh-lab-client  | dynamic       | 192.168.100.2    | SSH (shell) |
+
+> All host ports are dynamically allocated. Use `qlab ports` to see the actual mappings.
 
 ## Usage
 

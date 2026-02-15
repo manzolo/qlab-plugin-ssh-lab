@@ -8,8 +8,6 @@ set -euo pipefail
 PLUGIN_NAME="ssh-lab"
 SERVER_VM="ssh-lab-server"
 CLIENT_VM="ssh-lab-client"
-SERVER_SSH_PORT=2234
-CLIENT_SSH_PORT=2235
 
 # Internal LAN — direct VM-to-VM link via QEMU socket multicast
 INTERNAL_MCAST="230.0.0.1:10001"
@@ -24,12 +22,12 @@ echo "============================================="
 echo ""
 echo "  This lab creates two VMs on an internal LAN:"
 echo ""
-echo "    1. $SERVER_VM  (SSH port $SERVER_SSH_PORT)"
+echo "    1. $SERVER_VM"
 echo "       Internal IP: $SERVER_INTERNAL_IP"
 echo "       SSH server with fail2ban, knockd, key authentication"
 echo "       Role: defend this machine"
 echo ""
-echo "    2. $CLIENT_VM  (SSH port $CLIENT_SSH_PORT)"
+echo "    2. $CLIENT_VM"
 echo "       Internal IP: $CLIENT_INTERNAL_IP"
 echo "       Equipped with nmap, hydra, sshpass, knock client"
 echo "       Role: test the server's defenses"
@@ -403,16 +401,25 @@ echo ""
 info "Step 5: Starting VMs"
 echo ""
 
-info "Starting $SERVER_VM (SSH port $SERVER_SSH_PORT, LAN $SERVER_INTERNAL_IP)..."
-start_vm "$OVERLAY_SERVER" "$CIDATA_SERVER" "$MEMORY" "$SERVER_VM" "$SERVER_SSH_PORT" \
+# Multi-VM: resource check, cleanup trap, rollback on failure
+MEMORY_TOTAL=$(( MEMORY * 2 ))
+check_host_resources "$MEMORY_TOTAL" 2
+declare -a STARTED_VMS=()
+register_vm_cleanup STARTED_VMS
+
+info "Starting $SERVER_VM (LAN $SERVER_INTERNAL_IP)..."
+start_vm_or_fail STARTED_VMS "$OVERLAY_SERVER" "$CIDATA_SERVER" "$MEMORY" "$SERVER_VM" auto \
     "-netdev" "socket,id=vlan1,mcast=${INTERNAL_MCAST}" \
-    "-device" "virtio-net-pci,netdev=vlan1,mac=${SERVER_LAN_MAC}"
+    "-device" "virtio-net-pci,netdev=vlan1,mac=${SERVER_LAN_MAC}" || exit 1
 echo ""
 
-info "Starting $CLIENT_VM (SSH port $CLIENT_SSH_PORT, LAN $CLIENT_INTERNAL_IP)..."
-start_vm "$OVERLAY_CLIENT" "$CIDATA_CLIENT" "$MEMORY" "$CLIENT_VM" "$CLIENT_SSH_PORT" \
+info "Starting $CLIENT_VM (LAN $CLIENT_INTERNAL_IP)..."
+start_vm_or_fail STARTED_VMS "$OVERLAY_CLIENT" "$CIDATA_CLIENT" "$MEMORY" "$CLIENT_VM" auto \
     "-netdev" "socket,id=vlan1,mcast=${INTERNAL_MCAST}" \
-    "-device" "virtio-net-pci,netdev=vlan1,mac=${CLIENT_LAN_MAC}"
+    "-device" "virtio-net-pci,netdev=vlan1,mac=${CLIENT_LAN_MAC}" || exit 1
+
+# Successful start — disable cleanup trap
+trap - EXIT
 
 echo ""
 echo "============================================="
@@ -422,14 +429,12 @@ echo ""
 echo "  Server VM (defender):"
 echo "    SSH:          qlab shell $SERVER_VM"
 echo "    Log:          qlab log $SERVER_VM"
-echo "    Host port:    $SERVER_SSH_PORT"
 echo "    Internal IP:  $SERVER_INTERNAL_IP"
 echo "    Services:     sshd, fail2ban, knockd"
 echo ""
 echo "  Client VM (attacker):"
 echo "    SSH:          qlab shell $CLIENT_VM"
 echo "    Log:          qlab log $CLIENT_VM"
-echo "    Host port:    $CLIENT_SSH_PORT"
 echo "    Internal IP:  $CLIENT_INTERNAL_IP"
 echo "    Tools:        nmap, hydra, sshpass, knock"
 echo ""

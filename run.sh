@@ -388,11 +388,17 @@ echo ""
 
 OVERLAY_SERVER="$LAB_DIR/${SERVER_VM}-disk.qcow2"
 if [[ -f "$OVERLAY_SERVER" ]]; then rm -f "$OVERLAY_SERVER"; fi
-create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_SERVER" "${QLAB_DISK_SIZE:-}"
+create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_SERVER" "${QLAB_DISK_SIZE:-}" || {
+    error "Failed to create overlay disk for server."
+    exit 1
+}
 
 OVERLAY_CLIENT="$LAB_DIR/${CLIENT_VM}-disk.qcow2"
 if [[ -f "$OVERLAY_CLIENT" ]]; then rm -f "$OVERLAY_CLIENT"; fi
-create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_CLIENT" "${QLAB_DISK_SIZE:-}"
+create_overlay "$CLOUD_IMAGE_FILE" "$OVERLAY_CLIENT" "${QLAB_DISK_SIZE:-}" || {
+    error "Failed to create overlay disk for client."
+    exit 1
+}
 echo ""
 
 # =============================================

@@ -83,29 +83,40 @@ sshpass -p labpass ssh -o StrictHostKeyChecking=no labuser@192.168.100.1 "hostna
 
 ## Exercise 02 — Key-Based Authentication
 
-**Goal:** Set up passwordless login with SSH keys.
+**Goal:** Understand SSH key generation and key types.
 
-### 2.1 Generate a key pair on client
+### 2.1 Generate an ed25519 key pair on client
 
+On **ssh-lab-client**:
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/test_key -N ""
 ```
 
-### 2.2 Copy public key to server
+### 2.2 Verify key files and type
 
 ```bash
-sshpass -p labpass ssh-copy-id -i ~/.ssh/test_key -o StrictHostKeyChecking=no labuser@192.168.100.1
+test -f ~/.ssh/test_key && test -f ~/.ssh/test_key.pub && echo "Key files created"
+ssh-keygen -l -f ~/.ssh/test_key.pub
 ```
 
-### 2.3 Test key-based login
+**Expected output:** The fingerprint line should contain `ED25519`.
+
+### 2.3 Generate an RSA key for comparison
 
 ```bash
-ssh -i ~/.ssh/test_key -o StrictHostKeyChecking=no labuser@192.168.100.1 "echo key-auth-works"
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/test_rsa -N ""
+ssh-keygen -l -f ~/.ssh/test_rsa.pub
 ```
 
-**Expected output:** `key-auth-works`
+**Expected output:** The fingerprint line should show `4096` bits.
 
-**Verification:** Login works without password prompt using the key.
+### 2.4 Cleanup
+
+```bash
+rm -f ~/.ssh/test_key ~/.ssh/test_key.pub ~/.ssh/test_rsa ~/.ssh/test_rsa.pub
+```
+
+**Verification:** Both ed25519 and RSA keys can be generated and inspected. Ed25519 is preferred for modern deployments due to shorter keys and faster operations.
 
 ---
 

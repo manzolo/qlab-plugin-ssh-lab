@@ -109,6 +109,10 @@ packages:
   - iptables
   - net-tools
   - rsyslog
+  - zsh
+  - vim
+  - nano
+  - fonts-powerline
 write_files:
   - path: /etc/netplan/60-internal.yaml
     content: |
@@ -202,6 +206,13 @@ write_files:
           seq_timeout = 5
           command     = /usr/sbin/iptables -D KNOCKD_SSH -s %IP% -p tcp --dport 22 -j ACCEPT
           tcpflags    = syn
+  - path: /tmp/setup-zsh.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+      sed -i 's/^ZSH_THEME=.*/ZSH_THEME="agnoster"/' ~/.zshrc
+      sed -i 's/^plugins=(.*)/plugins=(git)/' ~/.zshrc
 runcmd:
   - chmod -x /etc/update-motd.d/*
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
@@ -240,6 +251,8 @@ runcmd:
     iptables -N KNOCKD_SSH
     iptables -A KNOCKD_SSH -j DROP
     iptables -A INPUT -s 192.168.100.0/24 -p tcp --dport 22 -j KNOCKD_SSH
+  - sudo -Hu labuser bash /tmp/setup-zsh.sh
+  - chsh -s /usr/bin/zsh labuser
   - echo "=== ssh-lab-server VM is ready! ==="
 USERDATA
 
@@ -279,6 +292,10 @@ packages:
   - sshpass
   - net-tools
   - curl
+  - zsh
+  - vim
+  - nano
+  - fonts-powerline
 write_files:
   - path: /etc/netplan/60-internal.yaml
     content: |
@@ -331,6 +348,13 @@ write_files:
 
       \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m
 
+  - path: /tmp/setup-zsh.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+      sed -i 's/^ZSH_THEME=.*/ZSH_THEME="agnoster"/' ~/.zshrc
+      sed -i 's/^plugins=(.*)/plugins=(git)/' ~/.zshrc
 runcmd:
   - chmod -x /etc/update-motd.d/*
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
@@ -339,6 +363,8 @@ runcmd:
   - rm -f /etc/motd.raw
   - systemctl restart sshd
   - netplan apply
+  - sudo -Hu labuser bash /tmp/setup-zsh.sh
+  - chsh -s /usr/bin/zsh labuser
   - echo "=== ssh-lab-client VM is ready! ==="
 USERDATA
 
